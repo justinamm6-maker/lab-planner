@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Plus, 
   Trash2, 
@@ -6,8 +6,6 @@ import {
   Menu, 
   X, 
   Eraser,
-  Info,
-  ChevronDown,
   Moon,
   Sun,
   Settings,
