@@ -65,16 +65,6 @@ const PRESET_COLORS = [
   '#3b82f6', '#6366f1', '#d946ef', '#f43f5e', '#64748b', '#000000'
 ];
 
-const DILUTION_FACTORS = [
-  { label: '1:2 (Half)', val: 2 },
-  { label: '1:3', val: 3 },
-  { label: '1:4', val: 4 },
-  { label: '1:5', val: 5 },
-  { label: '1:10', val: 10 },
-  { label: 'Half-Log (√10)', val: 3.16227766 },
-  { label: 'Quarter-Log (⁴√10)', val: 1.77827941 },
-];
-
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const getRowLabel = (index: number) => String.fromCharCode(65 + index); 
