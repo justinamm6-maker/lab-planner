@@ -12,7 +12,10 @@ import {
   AlertTriangle,
   Camera,
   Printer,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calculator,
+  ArrowRight,
+  Grid3X3
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 // @ts-ignore
@@ -62,6 +65,16 @@ const PRESET_COLORS = [
   '#3b82f6', '#6366f1', '#d946ef', '#f43f5e', '#64748b', '#000000'
 ];
 
+const DILUTION_FACTORS = [
+  { label: '1:2 (Half)', val: 2 },
+  { label: '1:3', val: 3 },
+  { label: '1:4', val: 4 },
+  { label: '1:5', val: 5 },
+  { label: '1:10', val: 10 },
+  { label: 'Half-Log (√10)', val: 3.16227766 },
+  { label: 'Quarter-Log (⁴√10)', val: 1.77827941 },
+];
+
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const getRowLabel = (index: number) => String.fromCharCode(65 + index); 
@@ -79,28 +92,42 @@ export default function LabPlanner() {
     }
   };
 
+  // -- App State --
   const [darkMode, setDarkMode] = useState<boolean>(() => loadState('lp_dark', false));
-
   const [reagents, setReagents] = useState<Reagent[]>(() => loadState('lp_reagents', [
     { id: 'r1', name: 'Control (PBS)', color: '#94a3b8' },
     { id: 'r2', name: 'Compound A', color: '#3b82f6' },
   ]));
-
   const [plates, setPlates] = useState<Plate[]>(() => loadState('lp_plates', [
     { id: 'p1', name: 'Plate 1', size: 96, wells: {} }
   ]));
-
   const [activePlateId, setActivePlateId] = useState<string>(() => {
     const savedId = localStorage.getItem('lp_activePlateId');
     return savedId || 'p1';
   });
 
+  // -- Interaction State --
   const [activeReagentId, setActiveReagentId] = useState<string>('r1');
   const [fillValue, setFillValue] = useState('100');
-  const [fillUnit, setFillUnit] = useState('µL');
+  const [fillUnit, setFillUnit] = useState('µM');
   const [useConcentration, setUseConcentration] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<'reagents' | 'calculator'>('reagents');
+
+  // -- Dilution Calculator State --
+  const [calcMode, setCalcMode] = useState<'serial' | 'log'>('serial'); 
+  const [calcStart, setCalcStart] = useState('100');
+  const [calcSteps, setCalcSteps] = useState(8);
+  const [fillTarget, setFillTarget] = useState('row-0'); 
   
+  // Serial specific
+  const [serialFactor, setSerialFactor] = useState(2); 
+  // Log specific
+  const [logStep, setLogStep] = useState(0.5); 
+  
+  const [generatedSeries, setGeneratedSeries] = useState<string[]>([]);
+  
+  // -- Modal & Confirm State --
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create'); 
   const [modalData, setModalData] = useState<{ name: string; size: number | string }>({ name: '', size: 96 });
@@ -114,16 +141,12 @@ export default function LabPlanner() {
 
   const plateRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (window.innerWidth < 768) setIsSidebarOpen(false);
-  }, []);
-
+  // -- Effects --
+  useEffect(() => { if (window.innerWidth < 768) setIsSidebarOpen(false); }, []);
   useEffect(() => { localStorage.setItem('lp_reagents', JSON.stringify(reagents)); }, [reagents]);
   useEffect(() => { localStorage.setItem('lp_plates', JSON.stringify(plates)); }, [plates]);
   useEffect(() => { localStorage.setItem('lp_dark', JSON.stringify(darkMode)); }, [darkMode]);
-  useEffect(() => { 
-    if (activePlateId) localStorage.setItem('lp_activePlateId', activePlateId); 
-  }, [activePlateId]);
+  useEffect(() => { if (activePlateId) localStorage.setItem('lp_activePlateId', activePlateId); }, [activePlateId]);
 
   const activePlate = plates.find(p => p.id === activePlateId) || plates[0];
   
@@ -139,6 +162,76 @@ export default function LabPlanner() {
     });
   };
 
+  // --- Calculator Logic ---
+
+  const generateDilution = () => {
+    const start = parseFloat(calcStart);
+    if (isNaN(start)) return;
+    
+    const series: string[] = [];
+    let current = start;
+    
+    // Determine the divisor based on mode
+    let divisor = 1;
+    if (calcMode === 'serial') {
+      divisor = serialFactor;
+    } else {
+      // For log dilution, Factor = 10^step
+      divisor = Math.pow(10, logStep);
+    }
+
+    for (let i = 0; i < calcSteps; i++) {
+      let displayVal = '';
+      if (current >= 100) displayVal = current.toFixed(0);
+      else if (current >= 10) displayVal = current.toFixed(1);
+      else if (current >= 1) displayVal = current.toFixed(2);
+      else displayVal = current.toPrecision(3);
+
+      if (displayVal.endsWith('.0') || displayVal.endsWith('.00')) {
+         displayVal = parseFloat(displayVal).toString();
+      }
+      
+      series.push(displayVal);
+      current = current / divisor;
+    }
+    setGeneratedSeries(series);
+  };
+
+  const applyDilutionValue = (val: string) => {
+    setFillValue(val);
+    setUseConcentration(true);
+  };
+
+  const handleAutoFill = () => {
+    const [type, indexStr] = fillTarget.split('-');
+    const targetIndex = parseInt(indexStr);
+    const currentWells = { ...activePlate.wells };
+    const plateConfig = PLATE_SIZES[activePlate.size];
+
+    generatedSeries.forEach((val, stepIndex) => {
+        let key = '';
+        
+        if (type === 'row') {
+            // Filling a Row (Horizontal)
+            if (stepIndex >= plateConfig.cols) return;
+            key = `${targetIndex}-${stepIndex}`;
+        } else {
+            // Filling a Column (Vertical)
+            if (stepIndex >= plateConfig.rows) return;
+            key = `${stepIndex}-${targetIndex}`;
+        }
+
+        currentWells[key] = {
+            reagentId: activeReagentId === 'eraser' ? reagents[0].id : activeReagentId,
+            value: val,
+            unit: fillUnit
+        };
+    });
+
+    setPlates(plates.map(p => p.id === activePlateId ? { ...p, wells: currentWells } : p));
+  };
+
+
   // --- Export Functions ---
 
   const handleExportImage = async () => {
@@ -146,7 +239,7 @@ export default function LabPlanner() {
     try {
       const canvas = await html2canvas(plateRef.current, {
         backgroundColor: darkMode ? '#0f172a' : '#ffffff', 
-        scale: 3 // Increased scale for crisper text
+        scale: 3 // High quality
       });
       const link = document.createElement('a');
       link.download = `${activePlate.name.replace(/\s+/g, '_')}_layout.png`;
@@ -202,10 +295,7 @@ export default function LabPlanner() {
         if (well) {
           const reagent = reagents.find(reg => reg.id === well.reagentId);
           if (reagent) {
-            // Strip '#' from hex color for Excel
             const colorHex = reagent.color.replace('#', '');
-            
-            // Add Color and Concentration
             cellStyle = {
               ...cellStyle,
               fill: { fgColor: { rgb: colorHex } },
@@ -238,16 +328,12 @@ export default function LabPlanner() {
     reagents.forEach((reagent, idx) => {
       const currentRow = legendRowStart + 2 + idx;
       if (!wsData[currentRow]) wsData[currentRow] = [];
-      
       while (wsData[currentRow].length < legendStartCol) wsData[currentRow].push({ v: "" });
 
       const colorHex = reagent.color.replace('#', '');
       wsData[currentRow][legendStartCol] = { 
         v: "", 
-        s: { 
-          fill: { fgColor: { rgb: colorHex } },
-          border: cellBorder
-        } 
+        s: { fill: { fgColor: { rgb: colorHex } }, border: cellBorder } 
       };
 
       wsData[currentRow][legendStartCol + 1] = { 
@@ -256,10 +342,7 @@ export default function LabPlanner() {
       };
     });
 
-    // Create sheet
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    
-    // Set Column Widths
     const wscols = [{ wch: 5 }]; 
     for(let i=0; i<config.cols; i++) wscols.push({ wch: 10 }); 
     wscols.push({ wch: 5 }); 
@@ -551,139 +634,341 @@ export default function LabPlanner() {
         <div className={`p-4 border-b ${border} flex justify-between items-center ${darkMode ? 'bg-slate-900' : 'bg-slate-100'}`}>
           <h1 className="font-bold text-lg flex items-center gap-2">
             <Beaker className="w-5 h-5 text-blue-500" />
-            LabPlanner
+            LabPlanner <span className="text-xs bg-blue-600 text-white px-1.5 rounded">PRO</span>
           </h1>
           <button onClick={() => setIsSidebarOpen(false)} className={`md:hidden p-1 ${textMuted}`}>
             <X className="w-6 h-6" />
           </button>
         </div>
 
+        {/* Tab Switcher */}
+        <div className="flex p-2 gap-2">
+            <button 
+                onClick={() => setSidebarTab('reagents')}
+                className={`flex-1 py-2 text-xs font-bold rounded uppercase tracking-wider flex items-center justify-center gap-2 transition-colors ${sidebarTab === 'reagents' ? 'bg-blue-600 text-white' : `${inputBg} ${textMuted}`}`}
+            >
+                <Beaker className="w-3 h-3" /> Reagents
+            </button>
+            <button 
+                onClick={() => setSidebarTab('calculator')}
+                className={`flex-1 py-2 text-xs font-bold rounded uppercase tracking-wider flex items-center justify-center gap-2 transition-colors ${sidebarTab === 'calculator' ? 'bg-emerald-600 text-white' : `${inputBg} ${textMuted}`}`}
+            >
+                <Calculator className="w-3 h-3" /> Dilutions
+            </button>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
           
-          {/* Paint Settings */}
-          <section className={`p-4 rounded-xl border ${darkMode ? 'bg-blue-900/20 border-blue-800' : 'bg-blue-50 border-blue-100'}`}>
-            <h3 className="text-xs font-bold text-blue-500 uppercase tracking-wider mb-3">Fill Settings</h3>
-            
-            <div className="flex items-center gap-2 mb-3">
-              <input 
-                type="checkbox" 
-                id="useConc" 
-                checked={useConcentration} 
-                onChange={(e) => setUseConcentration(e.target.checked)}
-                className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-              />
-              <label htmlFor="useConc" className={`text-xs font-bold cursor-pointer select-none ${textMuted}`}>
-                Include Concentration
-              </label>
-            </div>
+          {/* --- CALCULATOR TAB --- */}
+          {sidebarTab === 'calculator' && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+                    
+                    {/* Calc Mode Switch */}
+                    <div className={`flex rounded-lg overflow-hidden border ${border}`}>
+                        <button 
+                            onClick={() => setCalcMode('serial')}
+                            className={`flex-1 py-1.5 text-xs font-medium ${calcMode === 'serial' ? 'bg-emerald-600 text-white' : `${inputBg} ${textMuted}`}`}
+                        >
+                            Serial (Fold)
+                        </button>
+                        <button 
+                            onClick={() => setCalcMode('log')}
+                            className={`flex-1 py-1.5 text-xs font-medium ${calcMode === 'log' ? 'bg-emerald-600 text-white' : `${inputBg} ${textMuted}`}`}
+                        >
+                            Logarithmic
+                        </button>
+                    </div>
 
-            {useConcentration && (
-              <div className="flex gap-2 mb-3">
-                <div className="flex-1">
-                  <label className={`block text-xs ${textMuted} mb-1`}>Amount</label>
-                  <input 
-                    type="text" 
-                    value={fillValue}
-                    onChange={(e) => setFillValue(e.target.value)}
-                    className={`w-full p-2 rounded border ${border} ${inputBg} text-sm focus:ring-2 focus:ring-blue-500 outline-none`}
-                  />
+                    <div className={`p-4 rounded-xl border ${darkMode ? 'bg-emerald-900/20 border-emerald-800' : 'bg-emerald-50 border-emerald-100'}`}>
+                        
+                        <div className="space-y-4">
+                            {/* Start Conc */}
+                            <div>
+                                <label className={`block text-xs ${textMuted} mb-1`}>Starting Conc</label>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="number" 
+                                        value={calcStart}
+                                        onChange={(e) => setCalcStart(e.target.value)}
+                                        className={`flex-1 p-2 rounded border ${border} ${inputBg} text-sm focus:ring-2 focus:ring-emerald-500 outline-none`}
+                                    />
+                                    <select 
+                                        value={fillUnit}
+                                        onChange={(e) => setFillUnit(e.target.value)}
+                                        className={`w-20 p-2 rounded border ${border} ${inputBg} text-sm outline-none`}
+                                    >
+                                        {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Dynamic Inputs based on Mode */}
+                            {calcMode === 'serial' ? (
+                                <div>
+                                    <label className={`block text-xs ${textMuted} mb-1`}>Fold Factor (1:X)</label>
+                                    <div className="flex gap-2 mb-2">
+                                        <input 
+                                            type="number" 
+                                            value={serialFactor}
+                                            onChange={(e) => setSerialFactor(parseFloat(e.target.value))}
+                                            className={`w-full p-2 rounded border ${border} ${inputBg} text-sm focus:ring-2 focus:ring-emerald-500 outline-none`}
+                                        />
+                                    </div>
+                                    {/* Quick Presets */}
+                                    <div className="flex gap-1">
+                                        {[2, 4, 8].map(val => (
+                                            <button
+                                                key={val}
+                                                onClick={() => setSerialFactor(val)}
+                                                className={`flex-1 py-1 text-[10px] font-bold rounded border ${serialFactor === val ? 'bg-emerald-600 text-white border-emerald-600' : `${inputBg} ${textMuted} ${border}`}`}
+                                            >
+                                                1:{val}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className={`block text-xs ${textMuted} mb-1`}>Log Step (Log10)</label>
+                                    <div className="flex gap-2 mb-2">
+                                        <input 
+                                            type="number" 
+                                            step="0.1"
+                                            value={logStep}
+                                            onChange={(e) => setLogStep(parseFloat(e.target.value))}
+                                            className={`w-full p-2 rounded border ${border} ${inputBg} text-sm focus:ring-2 focus:ring-emerald-500 outline-none`}
+                                        />
+                                    </div>
+                                    {/* Quick Presets */}
+                                    <div className="flex gap-1">
+                                        <button
+                                            onClick={() => setLogStep(0.5)}
+                                            className={`flex-1 py-1 text-[10px] font-bold rounded border ${logStep === 0.5 ? 'bg-emerald-600 text-white border-emerald-600' : `${inputBg} ${textMuted} ${border}`}`}
+                                        >
+                                            Half-Log
+                                        </button>
+                                        <button
+                                            onClick={() => setLogStep(0.25)}
+                                            className={`flex-1 py-1 text-[10px] font-bold rounded border ${logStep === 0.25 ? 'bg-emerald-600 text-white border-emerald-600' : `${inputBg} ${textMuted} ${border}`}`}
+                                        >
+                                            Qtr-Log
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            
+                             <div>
+                                <label className={`block text-xs ${textMuted} mb-1`}>Steps (Wells)</label>
+                                <input 
+                                    type="range" min="2" max="12" 
+                                    value={calcSteps} 
+                                    onChange={(e) => setCalcSteps(parseInt(e.target.value))}
+                                    className="w-full accent-emerald-500"
+                                />
+                                <div className={`text-right text-xs ${textMuted}`}>{calcSteps} points</div>
+                            </div>
+
+                            <button 
+                                onClick={generateDilution}
+                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold text-xs uppercase tracking-wider shadow-sm"
+                            >
+                                Generate Series
+                            </button>
+                        </div>
+                    </div>
+
+                    {generatedSeries.length > 0 && (
+                        <div>
+                             <div className="flex flex-col gap-2 mb-2">
+                                <h3 className={`text-xs font-bold ${textMuted} uppercase tracking-wider`}>Results</h3>
+                                
+                                <div className="flex gap-2">
+                                    {/* Target Selector */}
+                                    <select 
+                                        value={fillTarget}
+                                        onChange={(e) => setFillTarget(e.target.value)}
+                                        className={`flex-1 p-1.5 text-xs rounded border ${border} ${inputBg} outline-none`}
+                                    >
+                                        {/* Rows */}
+                                        <optgroup label="Rows (Horizontal)">
+                                            {Array.from({ length: PLATE_SIZES[activePlate.size].rows }).map((_, i) => (
+                                                <option key={`row-${i}`} value={`row-${i}`}>Row {getRowLabel(i)}</option>
+                                            ))}
+                                        </optgroup>
+                                        {/* Columns */}
+                                        <optgroup label="Columns (Vertical)">
+                                            {Array.from({ length: PLATE_SIZES[activePlate.size].cols }).map((_, i) => (
+                                                <option key={`col-${i}`} value={`col-${i}`}>Col {i + 1}</option>
+                                            ))}
+                                        </optgroup>
+                                    </select>
+
+                                    <button 
+                                        onClick={handleAutoFill}
+                                        className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1"
+                                        title="Apply Series to Target"
+                                    >
+                                        <Grid3X3 className="w-3 h-3" /> Fill
+                                    </button>
+                                </div>
+                             </div>
+                             
+                             <div className="space-y-2">
+                                {generatedSeries.map((val, idx) => (
+                                    <div 
+                                        key={idx}
+                                        onClick={() => applyDilutionValue(val)}
+                                        className={`
+                                            group cursor-pointer flex items-center justify-between p-2 rounded border transition-all
+                                            ${fillValue === val ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500' : `${border} ${inputBg} hover:border-emerald-500`}
+                                        `}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold bg-slate-700 text-white`}>
+                                                {idx + 1}
+                                            </div>
+                                            <span className={`text-sm font-mono font-medium ${textMain}`}>{val}</span>
+                                            <span className={`text-xs ${textMuted}`}>{fillUnit}</span>
+                                        </div>
+                                        <ArrowRight className={`w-3 h-3 ${textMuted} opacity-0 group-hover:opacity-100`} />
+                                    </div>
+                                ))}
+                             </div>
+                        </div>
+                    )}
                 </div>
-                <div className="w-20">
-                  <label className={`block text-xs ${textMuted} mb-1`}>Unit</label>
-                  <select 
-                    value={fillUnit}
-                    onChange={(e) => setFillUnit(e.target.value)}
-                    className={`w-full p-2 rounded border ${border} ${inputBg} text-sm outline-none`}
-                  >
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-              </div>
             )}
-          </section>
 
-          {/* Reagents List */}
-          <section>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className={`text-xs font-bold ${textMuted} uppercase tracking-wider`}>Reagents</h3>
-              <button 
-                onClick={addReagent}
-                className="text-xs bg-slate-700 text-white px-2 py-1 rounded hover:bg-slate-600 flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" /> Add
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {/* Eraser Tool */}
-              <div 
-                onClick={() => setActiveReagentId('eraser')}
-                className={`
-                  flex items-center gap-3 p-2 rounded-lg cursor-pointer border transition-all
-                  ${activeReagentId === 'eraser' 
-                    ? `${activeItemBg} border-slate-400 ring-1 ring-slate-400` 
-                    : `border-transparent ${hoverBg}`}
-                `}
-              >
-                <div className={`w-8 h-8 rounded-full border-2 ${darkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'} flex items-center justify-center ${textMuted}`}>
-                  <Eraser className="w-4 h-4" />
+          {/* --- REAGENTS TAB --- */}
+          {sidebarTab === 'reagents' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+              
+              {/* Paint Settings */}
+              <section className={`p-4 rounded-xl border ${darkMode ? 'bg-blue-900/20 border-blue-800' : 'bg-blue-50 border-blue-100'}`}>
+                <h3 className="text-xs font-bold text-blue-500 uppercase tracking-wider mb-3">Fill Settings</h3>
+                
+                <div className="flex items-center gap-2 mb-3">
+                  <input 
+                    type="checkbox" 
+                    id="useConc" 
+                    checked={useConcentration} 
+                    onChange={(e) => setUseConcentration(e.target.checked)}
+                    className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <label htmlFor="useConc" className={`text-xs font-bold cursor-pointer select-none ${textMuted}`}>
+                    Include Concentration
+                  </label>
                 </div>
-                <span className={`font-medium text-sm ${textMuted}`}>Eraser (Clear Well)</span>
-              </div>
 
-              {/* Reagent Items */}
-              {reagents.map(reagent => (
-                <div 
-                  key={reagent.id}
-                  className={`
-                    relative group p-3 rounded-lg border transition-all
-                    ${activeReagentId === reagent.id 
-                      ? `${activeItemBg} border-blue-500 ring-1 ring-blue-500 shadow-sm` 
-                      : `border-transparent ${hoverBg}`}
-                  `}
-                  onClick={() => setActiveReagentId(reagent.id)}
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <input 
-                      type="color" 
-                      value={reagent.color}
-                      onChange={(e) => updateReagent(reagent.id, 'color', e.target.value)}
-                      className="w-8 h-8 rounded-full cursor-pointer border-none bg-transparent p-0 overflow-hidden shrink-0"
-                    />
-                    <input 
-                      type="text"
-                      value={reagent.name}
-                      onChange={(e) => updateReagent(reagent.id, 'name', e.target.value)}
-                      onClick={(e) => e.stopPropagation()} 
-                      className={`flex-1 bg-transparent text-sm font-medium focus:border-b ${border} outline-none ${textMain}`}
-                    />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); deleteReagent(reagent.id); }}
-                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Color Presets Grid */}
-                  <div className="flex flex-wrap gap-1.5 pl-11">
-                    {PRESET_COLORS.map(color => (
-                      <button
-                        key={color}
-                        onClick={(e) => { e.stopPropagation(); updateReagent(reagent.id, 'color', color); }}
-                        className={`
-                          w-4 h-4 rounded-full border border-black/10 transition-transform hover:scale-110
-                          ${reagent.color === color ? 'ring-2 ring-slate-400 scale-110' : ''}
-                        `}
-                        style={{ backgroundColor: color }}
-                        title={color}
+                {useConcentration && (
+                  <div className="flex gap-2 mb-3">
+                    <div className="flex-1">
+                      <label className={`block text-xs ${textMuted} mb-1`}>Amount</label>
+                      <input 
+                        type="text" 
+                        value={fillValue}
+                        onChange={(e) => setFillValue(e.target.value)}
+                        className={`w-full p-2 rounded border ${border} ${inputBg} text-sm focus:ring-2 focus:ring-blue-500 outline-none`}
                       />
-                    ))}
+                    </div>
+                    <div className="w-20">
+                      <label className={`block text-xs ${textMuted} mb-1`}>Unit</label>
+                      <select 
+                        value={fillUnit}
+                        onChange={(e) => setFillUnit(e.target.value)}
+                        className={`w-full p-2 rounded border ${border} ${inputBg} text-sm outline-none`}
+                      >
+                        {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </div>
                   </div>
+                )}
+              </section>
+
+              {/* Reagents List */}
+              <section>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className={`text-xs font-bold ${textMuted} uppercase tracking-wider`}>Reagents</h3>
+                  <button 
+                    onClick={addReagent}
+                    className="text-xs bg-slate-700 text-white px-2 py-1 rounded hover:bg-slate-600 flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Add
+                  </button>
                 </div>
-              ))}
+
+                <div className="space-y-2">
+                  {/* Eraser Tool */}
+                  <div 
+                    onClick={() => setActiveReagentId('eraser')}
+                    className={`
+                      flex items-center gap-3 p-2 rounded-lg cursor-pointer border transition-all
+                      ${activeReagentId === 'eraser' 
+                        ? `${activeItemBg} border-slate-400 ring-1 ring-slate-400` 
+                        : `border-transparent ${hoverBg}`}
+                    `}
+                  >
+                    <div className={`w-8 h-8 rounded-full border-2 ${darkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-300 bg-white'} flex items-center justify-center ${textMuted}`}>
+                      <Eraser className="w-4 h-4" />
+                    </div>
+                    <span className={`font-medium text-sm ${textMuted}`}>Eraser (Clear Well)</span>
+                  </div>
+
+                  {/* Reagent Items */}
+                  {reagents.map(reagent => (
+                    <div 
+                      key={reagent.id}
+                      className={`
+                        relative group p-3 rounded-lg border transition-all
+                        ${activeReagentId === reagent.id 
+                          ? `${activeItemBg} border-blue-500 ring-1 ring-blue-500 shadow-sm` 
+                          : `border-transparent ${hoverBg}`}
+                      `}
+                      onClick={() => setActiveReagentId(reagent.id)}
+                    >
+                      <div className="flex items-center gap-3 mb-2">
+                        <input 
+                          type="color" 
+                          value={reagent.color}
+                          onChange={(e) => updateReagent(reagent.id, 'color', e.target.value)}
+                          className="w-8 h-8 rounded-full cursor-pointer border-none bg-transparent p-0 overflow-hidden shrink-0"
+                        />
+                        <input 
+                          type="text"
+                          value={reagent.name}
+                          onChange={(e) => updateReagent(reagent.id, 'name', e.target.value)}
+                          onClick={(e) => e.stopPropagation()} 
+                          className={`flex-1 bg-transparent text-sm font-medium focus:border-b ${border} outline-none ${textMain}`}
+                        />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); deleteReagent(reagent.id); }}
+                          className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-opacity"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Color Presets Grid */}
+                      <div className="flex flex-wrap gap-1.5 pl-11">
+                        {PRESET_COLORS.map(color => (
+                          <button
+                            key={color}
+                            onClick={(e) => { e.stopPropagation(); updateReagent(reagent.id, 'color', color); }}
+                            className={`
+                              w-4 h-4 rounded-full border border-black/10 transition-transform hover:scale-110
+                              ${reagent.color === color ? 'ring-2 ring-slate-400 scale-110' : ''}
+                            `}
+                            style={{ backgroundColor: color }}
+                            title={color}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
-          </section>
+          )}
 
         </div>
       </aside>
