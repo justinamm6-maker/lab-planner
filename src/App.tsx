@@ -161,8 +161,9 @@ export default function LabPlanner() {
   const handleExportExcel = () => {
     const config = PLATE_SIZES[activePlate.size];
     const wb = XLSX.utils.book_new();
-    const wsData = [];
-    const wsMerges = [];
+    
+    // Fix: Explicitly type these arrays as "any" to prevent strict mode errors
+    const wsData: any[] = [];
 
     // Styles
     const headerStyle = {
@@ -172,7 +173,7 @@ export default function LabPlanner() {
         top: { style: "thin" }, bottom: { style: "thin" },
         left: { style: "thin" }, right: { style: "thin" }
       },
-      fill: { fgColor: { rgb: "EFEFEF" } } // Grey background for headers
+      fill: { fgColor: { rgb: "EFEFEF" } } 
     };
 
     const cellBorder = {
@@ -181,7 +182,7 @@ export default function LabPlanner() {
     };
 
     // --- 1. Create Header Row (1, 2, 3...) ---
-    const headerRow = [{ v: "", s: headerStyle }]; // Empty corner
+    const headerRow: any[] = [{ v: "", s: headerStyle }]; 
     for (let c = 0; c < config.cols; c++) {
       headerRow.push({ v: (c + 1).toString(), s: headerStyle });
     }
@@ -189,7 +190,7 @@ export default function LabPlanner() {
 
     // --- 2. Create Data Rows ---
     for (let r = 0; r < config.rows; r++) {
-      const rowCells = [];
+      const rowCells: any[] = [];
       // Label (A, B, C...)
       rowCells.push({ v: getRowLabel(r), s: headerStyle });
 
@@ -210,13 +211,13 @@ export default function LabPlanner() {
             cellStyle = {
               ...cellStyle,
               fill: { fgColor: { rgb: colorHex } },
-              font: { color: { rgb: getContrastColorExcel(reagent.color) } } // Auto-text color
+              font: { color: { rgb: getContrastColorExcel(reagent.color) } } 
             } as any;
             
             if (well.value) {
                cellValue = `${well.value} ${well.unit}`;
             } else {
-               cellValue = " "; // Filled but no value
+               cellValue = " "; 
             }
           }
         }
@@ -226,7 +227,6 @@ export default function LabPlanner() {
     }
 
     // --- 3. Create Legend (Side by Side) ---
-    // We add the legend starting 2 columns after the plate
     const legendStartCol = config.cols + 2;
     const legendRowStart = 1;
 
@@ -241,10 +241,8 @@ export default function LabPlanner() {
       const currentRow = legendRowStart + 2 + idx;
       if (!wsData[currentRow]) wsData[currentRow] = [];
       
-      // Fill padding if row is short
       while (wsData[currentRow].length < legendStartCol) wsData[currentRow].push({ v: "" });
 
-      // Color Box
       const colorHex = reagent.color.replace('#', '');
       wsData[currentRow][legendStartCol] = { 
         v: "", 
@@ -254,7 +252,6 @@ export default function LabPlanner() {
         } 
       };
 
-      // Name
       wsData[currentRow][legendStartCol + 1] = { 
         v: reagent.name, 
         s: { font: { bold: true } } 
@@ -265,11 +262,11 @@ export default function LabPlanner() {
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     
     // Set Column Widths
-    const wscols = [{ wch: 5 }]; // First col width
-    for(let i=0; i<config.cols; i++) wscols.push({ wch: 10 }); // Well cols
-    wscols.push({ wch: 5 }); // Gap
-    wscols.push({ wch: 5 }); // Legend Color box
-    wscols.push({ wch: 20 }); // Legend Name
+    const wscols = [{ wch: 5 }]; 
+    for(let i=0; i<config.cols; i++) wscols.push({ wch: 10 }); 
+    wscols.push({ wch: 5 }); 
+    wscols.push({ wch: 5 }); 
+    wscols.push({ wch: 20 }); 
     ws['!cols'] = wscols;
 
     XLSX.utils.book_append_sheet(wb, ws, "Plate Layout");
