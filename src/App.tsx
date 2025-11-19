@@ -11,13 +11,38 @@ import {
   Moon,
   Sun,
   Settings,
-  Check,
   AlertTriangle
 } from 'lucide-react';
 
+// --- Types ---
+interface Reagent {
+  id: string;
+  name: string;
+  color: string;
+}
+
+interface WellData {
+  reagentId: string;
+  value: string | null;
+  unit: string | null;
+}
+
+interface Plate {
+  id: string;
+  name: string;
+  size: number;
+  wells: Record<string, WellData>;
+}
+
+interface PlateConfig {
+  rows: number;
+  cols: number;
+  label: string;
+}
+
 // --- Constants & Helpers ---
 
-const PLATE_SIZES = {
+const PLATE_SIZES: Record<number, PlateConfig> = {
   6: { rows: 2, cols: 3, label: '6-Well' },
   12: { rows: 3, cols: 4, label: '12-Well' },
   24: { rows: 4, cols: 6, label: '24-Well' },
@@ -28,32 +53,20 @@ const PLATE_SIZES = {
 
 const UNITS = ['µL', 'mL', 'nM', 'µM', 'mM', 'M', '%', 'ng/mL', 'µg/mL'];
 
-// Distinct palette for scientific planning
 const PRESET_COLORS = [
-  '#ef4444', // Red
-  '#f97316', // Orange
-  '#f59e0b', // Amber
-  '#84cc16', // Lime
-  '#10b981', // Emerald
-  '#06b6d4', // Cyan
-  '#3b82f6', // Blue
-  '#6366f1', // Indigo
-  '#d946ef', // Fuchsia
-  '#f43f5e', // Rose
-  '#64748b', // Slate
-  '#000000', // Black
+  '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', 
+  '#3b82f6', '#6366f1', '#d946ef', '#f43f5e', '#64748b', '#000000'
 ];
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-const getRowLabel = (index) => String.fromCharCode(65 + index); // 0 -> A, 1 -> B
+const getRowLabel = (index: number) => String.fromCharCode(65 + index); 
 
 // --- Main Component ---
 
 export default function LabPlanner() {
-  // --- State ---
   
-  const loadState = (key, defaultVal) => {
+  const loadState = <T,>(key: string, defaultVal: T): T => {
     try {
       const saved = localStorage.getItem(key);
       return saved ? JSON.parse(saved) : defaultVal;
@@ -62,36 +75,33 @@ export default function LabPlanner() {
     }
   };
 
-  const [darkMode, setDarkMode] = useState(() => loadState('lp_dark', false));
+  const [darkMode, setDarkMode] = useState<boolean>(() => loadState('lp_dark', false));
 
-  const [reagents, setReagents] = useState(() => loadState('lp_reagents', [
+  const [reagents, setReagents] = useState<Reagent[]>(() => loadState('lp_reagents', [
     { id: 'r1', name: 'Control (PBS)', color: '#94a3b8' },
     { id: 'r2', name: 'Compound A', color: '#3b82f6' },
   ]));
 
-  const [plates, setPlates] = useState(() => loadState('lp_plates', [
+  const [plates, setPlates] = useState<Plate[]>(() => loadState('lp_plates', [
     { id: 'p1', name: 'Plate 1', size: 96, wells: {} }
   ]));
 
-  // Load activePlateId from storage, or default to the first plate's ID if available
-  const [activePlateId, setActivePlateId] = useState(() => {
+  const [activePlateId, setActivePlateId] = useState<string>(() => {
     const savedId = localStorage.getItem('lp_activePlateId');
     return savedId || 'p1';
   });
 
-  const [activeReagentId, setActiveReagentId] = useState('r1');
+  const [activeReagentId, setActiveReagentId] = useState<string>('r1');
   const [fillValue, setFillValue] = useState('100');
   const [fillUnit, setFillUnit] = useState('µL');
   const [useConcentration, setUseConcentration] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
-  // Modal State
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState('create'); // 'create' | 'edit'
-  const [modalData, setModalData] = useState({ name: '', size: 96 });
+  const [modalMode, setModalMode] = useState<'create' | 'edit'>('create'); 
+  const [modalData, setModalData] = useState<{ name: string; size: number | string }>({ name: '', size: 96 });
 
-  // Confirmation Dialog State (Replaces window.confirm)
-  const [confirmConfig, setConfirmConfig] = useState({ 
+  const [confirmConfig, setConfirmConfig] = useState<{ isOpen: boolean; title: string; message: string; action: (() => void) | null }>({ 
     isOpen: false, 
     title: '', 
     message: '', 
@@ -102,7 +112,6 @@ export default function LabPlanner() {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   }, []);
 
-  // --- Persistence Effects ---
   useEffect(() => { localStorage.setItem('lp_reagents', JSON.stringify(reagents)); }, [reagents]);
   useEffect(() => { localStorage.setItem('lp_plates', JSON.stringify(plates)); }, [plates]);
   useEffect(() => { localStorage.setItem('lp_dark', JSON.stringify(darkMode)); }, [darkMode]);
@@ -112,9 +121,7 @@ export default function LabPlanner() {
 
   const activePlate = plates.find(p => p.id === activePlateId) || plates[0];
   
-  // --- Logic Helpers ---
-
-  const triggerConfirm = (title, message, action) => {
+  const triggerConfirm = (title: string, message: string, action: () => void) => {
     setConfirmConfig({
       isOpen: true,
       title,
@@ -125,8 +132,6 @@ export default function LabPlanner() {
       }
     });
   };
-
-  // --- Handlers ---
 
   const initiateAddPlate = () => {
     setModalMode('create');
@@ -144,24 +149,22 @@ export default function LabPlanner() {
     const performSave = () => {
       if (modalMode === 'create') {
         const newId = generateId();
-        const newPlate = {
+        const newPlate: Plate = {
           id: newId,
           name: modalData.name || `Plate ${plates.length + 1}`,
-          size: parseInt(modalData.size),
+          size: Number(modalData.size),
           wells: {}
         };
         setPlates([...plates, newPlate]);
         setActivePlateId(newId);
       } else {
-        // Edit Mode logic
-        const sizeChanged = parseInt(modalData.size) !== activePlate.size;
-        
+        const sizeChanged = Number(modalData.size) !== activePlate.size;
         setPlates(plates.map(p => {
           if (p.id === activePlate.id) {
             return {
               ...p,
               name: modalData.name,
-              size: parseInt(modalData.size),
+              size: Number(modalData.size),
               wells: sizeChanged ? {} : p.wells 
             };
           }
@@ -171,9 +174,8 @@ export default function LabPlanner() {
       setModalOpen(false);
     };
 
-    // Check for size change warning
     if (modalMode === 'edit') {
-        const sizeChanged = parseInt(modalData.size) !== activePlate.size;
+        const sizeChanged = Number(modalData.size) !== activePlate.size;
         if (sizeChanged) {
             triggerConfirm(
                 "Change Layout?", 
@@ -183,16 +185,11 @@ export default function LabPlanner() {
             return;
         }
     }
-
-    // If no warning needed, just save
     performSave();
   };
 
   const requestDeletePlate = () => {
-    if (plates.length <= 1) {
-      // Use simple custom alert logic or just ignore
-      return; 
-    }
+    if (plates.length <= 1) return; 
 
     triggerConfirm(
         "Delete Plate?",
@@ -213,11 +210,11 @@ export default function LabPlanner() {
     setActiveReagentId(newId);
   };
 
-  const updateReagent = (id, field, value) => {
+  const updateReagent = (id: string, field: keyof Reagent, value: string) => {
     setReagents(reagents.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
-  const deleteReagent = (id) => {
+  const deleteReagent = (id: string) => {
     triggerConfirm(
         "Delete Reagent?",
         "Remove this reagent? Wells filled with it will remain colored but unlinked.",
@@ -228,7 +225,7 @@ export default function LabPlanner() {
     );
   };
 
-  const handleWellClick = (rowIndex, colIndex) => {
+  const handleWellClick = (rowIndex: number, colIndex: number) => {
     const key = `${rowIndex}-${colIndex}`;
     const currentWells = { ...activePlate.wells };
 
@@ -247,9 +244,7 @@ export default function LabPlanner() {
     ));
   };
 
-  // --- Render Helpers ---
-
-  const getWellStyle = (rowIndex, colIndex) => {
+  const getWellStyle = (rowIndex: number, colIndex: number) => {
     const key = `${rowIndex}-${colIndex}`;
     const wellData = activePlate.wells[key];
     
@@ -262,7 +257,7 @@ export default function LabPlanner() {
     };
   };
 
-  const getContrastColor = (hexColor) => {
+  const getContrastColor = (hexColor: string) => {
     if (!hexColor) return 'black';
     const r = parseInt(hexColor.substr(1, 2), 16);
     const g = parseInt(hexColor.substr(3, 2), 16);
@@ -284,7 +279,7 @@ export default function LabPlanner() {
   return (
     <div className={`flex h-screen w-full font-sans overflow-hidden transition-colors duration-200 ${bgMain} ${textMain}`}>
       
-      {/* Custom Confirmation Modal (High Z-Index) */}
+      {/* Custom Confirmation Modal */}
       {confirmConfig.isOpen && (
         <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
             <div className={`${bgSurface} p-6 rounded-xl shadow-2xl w-full max-w-sm border ${border} transform scale-100 animate-in fade-in zoom-in duration-200`}>
@@ -301,7 +296,7 @@ export default function LabPlanner() {
                         Cancel
                     </button>
                     <button 
-                        onClick={confirmConfig.action}
+                        onClick={confirmConfig.action!}
                         className="flex-1 p-2.5 rounded-lg font-medium bg-red-600 hover:bg-red-700 text-white shadow-md"
                     >
                         Confirm
