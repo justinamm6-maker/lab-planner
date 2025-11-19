@@ -15,7 +15,8 @@ import {
   FileSpreadsheet
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { utils, writeFile } from 'xlsx';
+// @ts-ignore
+import XLSX from 'xlsx-js-style';
 
 // --- Types ---
 interface Reagent {
@@ -111,7 +112,6 @@ export default function LabPlanner() {
     action: null 
   });
 
-  // Ref for screenshot
   const plateRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -145,8 +145,8 @@ export default function LabPlanner() {
     if (!plateRef.current) return;
     try {
       const canvas = await html2canvas(plateRef.current, {
-        backgroundColor: darkMode ? '#0f172a' : '#ffffff', // Match theme
-        scale: 2 // Higher quality
+        backgroundColor: darkMode ? '#0f172a' : '#ffffff', 
+        scale: 2 
       });
       const link = document.createElement('a');
       link.download = `${activePlate.name.replace(/\s+/g, '_')}_layout.png`;
@@ -160,38 +160,129 @@ export default function LabPlanner() {
 
   const handleExportExcel = () => {
     const config = PLATE_SIZES[activePlate.size];
-    const rows = [];
+    const wb = XLSX.utils.book_new();
+    const wsData = [];
+    const wsMerges = [];
 
-    // Header Row (1, 2, 3...)
-    const headerRow = ['']; // Empty corner cell
+    // Styles
+    const headerStyle = {
+      font: { bold: true, color: { rgb: "000000" } },
+      alignment: { horizontal: "center", vertical: "center" },
+      border: {
+        top: { style: "thin" }, bottom: { style: "thin" },
+        left: { style: "thin" }, right: { style: "thin" }
+      },
+      fill: { fgColor: { rgb: "EFEFEF" } } // Grey background for headers
+    };
+
+    const cellBorder = {
+      top: { style: "thin" }, bottom: { style: "thin" },
+      left: { style: "thin" }, right: { style: "thin" }
+    };
+
+    // --- 1. Create Header Row (1, 2, 3...) ---
+    const headerRow = [{ v: "", s: headerStyle }]; // Empty corner
     for (let c = 0; c < config.cols; c++) {
-      headerRow.push(`${c + 1}`);
+      headerRow.push({ v: (c + 1).toString(), s: headerStyle });
     }
-    rows.push(headerRow);
+    wsData.push(headerRow);
 
-    // Data Rows
+    // --- 2. Create Data Rows ---
     for (let r = 0; r < config.rows; r++) {
-      const rowData = [getRowLabel(r)]; // Row Label (A, B, C...)
+      const rowCells = [];
+      // Label (A, B, C...)
+      rowCells.push({ v: getRowLabel(r), s: headerStyle });
+
+      // Wells
       for (let c = 0; c < config.cols; c++) {
         const key = `${r}-${c}`;
         const well = activePlate.wells[key];
+        let cellStyle = { border: cellBorder, alignment: { horizontal: "center" } };
+        let cellValue = "";
+
         if (well) {
           const reagent = reagents.find(reg => reg.id === well.reagentId);
-          const reagentName = reagent ? reagent.name : 'Unknown';
-          const val = well.value ? ` (${well.value}${well.unit})` : '';
-          rowData.push(`${reagentName}${val}`);
-        } else {
-          rowData.push('');
+          if (reagent) {
+            // Strip '#' from hex color for Excel
+            const colorHex = reagent.color.replace('#', '');
+            
+            // Add Color and Concentration
+            cellStyle = {
+              ...cellStyle,
+              fill: { fgColor: { rgb: colorHex } },
+              font: { color: { rgb: getContrastColorExcel(reagent.color) } } // Auto-text color
+            } as any;
+            
+            if (well.value) {
+               cellValue = `${well.value} ${well.unit}`;
+            } else {
+               cellValue = " "; // Filled but no value
+            }
+          }
         }
+        rowCells.push({ v: cellValue, s: cellStyle });
       }
-      rows.push(rowData);
+      wsData.push(rowCells);
     }
 
-    // Create Sheet
-    const ws = utils.aoa_to_sheet(rows);
-    const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Plate Layout");
-    writeFile(wb, `${activePlate.name.replace(/\s+/g, '_')}.xlsx`);
+    // --- 3. Create Legend (Side by Side) ---
+    // We add the legend starting 2 columns after the plate
+    const legendStartCol = config.cols + 2;
+    const legendRowStart = 1;
+
+    // Add "Legend" Header
+    if (!wsData[legendRowStart]) wsData[legendRowStart] = [];
+    while (wsData[legendRowStart].length < legendStartCol) wsData[legendRowStart].push({ v: "" });
+    
+    wsData[legendRowStart][legendStartCol] = { v: "LEGEND", s: { font: { bold: true, sz: 14 } } };
+    
+    // Add Reagents
+    reagents.forEach((reagent, idx) => {
+      const currentRow = legendRowStart + 2 + idx;
+      if (!wsData[currentRow]) wsData[currentRow] = [];
+      
+      // Fill padding if row is short
+      while (wsData[currentRow].length < legendStartCol) wsData[currentRow].push({ v: "" });
+
+      // Color Box
+      const colorHex = reagent.color.replace('#', '');
+      wsData[currentRow][legendStartCol] = { 
+        v: "", 
+        s: { 
+          fill: { fgColor: { rgb: colorHex } },
+          border: cellBorder
+        } 
+      };
+
+      // Name
+      wsData[currentRow][legendStartCol + 1] = { 
+        v: reagent.name, 
+        s: { font: { bold: true } } 
+      };
+    });
+
+    // Create sheet
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    
+    // Set Column Widths
+    const wscols = [{ wch: 5 }]; // First col width
+    for(let i=0; i<config.cols; i++) wscols.push({ wch: 10 }); // Well cols
+    wscols.push({ wch: 5 }); // Gap
+    wscols.push({ wch: 5 }); // Legend Color box
+    wscols.push({ wch: 20 }); // Legend Name
+    ws['!cols'] = wscols;
+
+    XLSX.utils.book_append_sheet(wb, ws, "Plate Layout");
+    XLSX.writeFile(wb, `${activePlate.name.replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const getContrastColorExcel = (hexColor: string) => {
+    if (!hexColor) return "000000";
+    const r = parseInt(hexColor.substr(1, 2), 16);
+    const g = parseInt(hexColor.substr(3, 2), 16);
+    const b = parseInt(hexColor.substr(5, 2), 16);
+    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    return yiq >= 128 ? "000000" : "FFFFFF";
   };
 
   const handlePrint = () => {
@@ -346,7 +437,7 @@ export default function LabPlanner() {
   return (
     <div className={`flex h-screen w-full font-sans overflow-hidden transition-colors duration-200 ${bgMain} ${textMain}`}>
       
-      {/* Print-specific styles to hide UI elements when printing */}
+      {/* Print-specific styles */}
       <style>{`
         @media print {
           @page { size: landscape; margin: 0.5cm; }
