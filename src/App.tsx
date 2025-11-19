@@ -146,7 +146,7 @@ export default function LabPlanner() {
     try {
       const canvas = await html2canvas(plateRef.current, {
         backgroundColor: darkMode ? '#0f172a' : '#ffffff', 
-        scale: 2 
+        scale: 3 // Increased scale for crisper text
       });
       const link = document.createElement('a');
       link.download = `${activePlate.name.replace(/\s+/g, '_')}_layout.png`;
@@ -161,8 +161,6 @@ export default function LabPlanner() {
   const handleExportExcel = () => {
     const config = PLATE_SIZES[activePlate.size];
     const wb = XLSX.utils.book_new();
-    
-    // Fix: Explicitly type these arrays as "any" to prevent strict mode errors
     const wsData: any[] = [];
 
     // Styles
@@ -837,9 +835,9 @@ export default function LabPlanner() {
                           {/* Well Content */}
                           {wellData && wellData.value && (
                             <>
-                              <span className="text-[10px] md:text-xs font-semibold truncate w-full px-1">
+                              <span className="text-[10px] md:text-xs font-bold truncate w-full px-1 text-center">
                                 {wellData.value}
-                                <span className="opacity-75 text-[8px] md:text-[10px] block -mt-0.5">{wellData.unit}</span>
+                                <span className="block text-[9px] md:text-[10px] font-normal">{wellData.unit}</span>
                               </span>
                             </>
                           )}
