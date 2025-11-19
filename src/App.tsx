@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Plus, 
   Trash2, 
@@ -9,8 +9,13 @@ import {
   Moon,
   Sun,
   Settings,
-  AlertTriangle
+  AlertTriangle,
+  Camera,
+  Printer,
+  FileSpreadsheet
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { utils, writeFile } from 'xlsx';
 
 // --- Types ---
 interface Reagent {
@@ -106,6 +111,9 @@ export default function LabPlanner() {
     action: null 
   });
 
+  // Ref for screenshot
+  const plateRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
   }, []);
@@ -130,6 +138,67 @@ export default function LabPlanner() {
       }
     });
   };
+
+  // --- Export Functions ---
+
+  const handleExportImage = async () => {
+    if (!plateRef.current) return;
+    try {
+      const canvas = await html2canvas(plateRef.current, {
+        backgroundColor: darkMode ? '#0f172a' : '#ffffff', // Match theme
+        scale: 2 // Higher quality
+      });
+      const link = document.createElement('a');
+      link.download = `${activePlate.name.replace(/\s+/g, '_')}_layout.png`;
+      link.href = canvas.toDataURL();
+      link.click();
+    } catch (err) {
+      console.error("Export failed", err);
+      alert("Failed to export image");
+    }
+  };
+
+  const handleExportExcel = () => {
+    const config = PLATE_SIZES[activePlate.size];
+    const rows = [];
+
+    // Header Row (1, 2, 3...)
+    const headerRow = ['']; // Empty corner cell
+    for (let c = 0; c < config.cols; c++) {
+      headerRow.push(`${c + 1}`);
+    }
+    rows.push(headerRow);
+
+    // Data Rows
+    for (let r = 0; r < config.rows; r++) {
+      const rowData = [getRowLabel(r)]; // Row Label (A, B, C...)
+      for (let c = 0; c < config.cols; c++) {
+        const key = `${r}-${c}`;
+        const well = activePlate.wells[key];
+        if (well) {
+          const reagent = reagents.find(reg => reg.id === well.reagentId);
+          const reagentName = reagent ? reagent.name : 'Unknown';
+          const val = well.value ? ` (${well.value}${well.unit})` : '';
+          rowData.push(`${reagentName}${val}`);
+        } else {
+          rowData.push('');
+        }
+      }
+      rows.push(rowData);
+    }
+
+    // Create Sheet
+    const ws = utils.aoa_to_sheet(rows);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Plate Layout");
+    writeFile(wb, `${activePlate.name.replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // --- Handlers ---
 
   const initiateAddPlate = () => {
     setModalMode('create');
@@ -277,9 +346,20 @@ export default function LabPlanner() {
   return (
     <div className={`flex h-screen w-full font-sans overflow-hidden transition-colors duration-200 ${bgMain} ${textMain}`}>
       
+      {/* Print-specific styles to hide UI elements when printing */}
+      <style>{`
+        @media print {
+          @page { size: landscape; margin: 0.5cm; }
+          body { -webkit-print-color-adjust: exact; }
+          aside, header, .no-print { display: none !important; }
+          main { position: static; height: auto; overflow: visible; }
+          .print-container { border: none !important; box-shadow: none !important; width: 100% !important; }
+        }
+      `}</style>
+
       {/* Custom Confirmation Modal */}
       {confirmConfig.isOpen && (
-        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4 backdrop-blur-sm no-print">
             <div className={`${bgSurface} p-6 rounded-xl shadow-2xl w-full max-w-sm border ${border} transform scale-100 animate-in fade-in zoom-in duration-200`}>
                 <div className="flex items-center gap-3 text-amber-500 mb-4">
                     <AlertTriangle className="w-6 h-6" />
@@ -306,7 +386,7 @@ export default function LabPlanner() {
 
       {/* Settings Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 no-print">
           <div className={`${bgSurface} p-6 rounded-xl shadow-2xl w-full max-w-sm border ${border}`}>
             <h2 className="text-lg font-bold mb-4">{modalMode === 'create' ? 'Create New Plate' : 'Edit Plate'}</h2>
             
@@ -369,7 +449,7 @@ export default function LabPlanner() {
       {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-20 md:hidden" 
+          className="fixed inset-0 bg-black/50 z-20 md:hidden no-print" 
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
@@ -561,6 +641,34 @@ export default function LabPlanner() {
           </div>
 
           <div className="flex items-center gap-2">
+            
+            {/* Export Actions */}
+            <button 
+              onClick={handleExportImage}
+              className={`hidden sm:flex p-2 rounded-full ${darkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} ${textMuted}`}
+              title="Download Image"
+            >
+              <Camera className="w-4 h-4" />
+            </button>
+
+            <button 
+              onClick={handlePrint}
+              className={`hidden sm:flex p-2 rounded-full ${darkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} ${textMuted}`}
+              title="Print / Save as PDF"
+            >
+              <Printer className="w-4 h-4" />
+            </button>
+
+            <button 
+              onClick={handleExportExcel}
+              className={`hidden sm:flex p-2 rounded-full ${darkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'} ${textMuted}`}
+              title="Export to Excel"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-green-600" />
+            </button>
+            
+            <div className={`hidden sm:block w-px h-6 mx-2 ${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`}></div>
+
             {/* Edit Plate Button */}
             <button 
               onClick={initiateEditPlate}
@@ -586,8 +694,11 @@ export default function LabPlanner() {
         {/* Plate Viewport */}
         <div className={`flex-1 overflow-auto ${bgMain} p-4 md:p-8 relative touch-pan-x touch-pan-y`}>
           
-          {/* Grid Container */}
-          <div className={`min-w-fit mx-auto ${bgSurface} p-4 md:p-8 rounded-xl shadow-sm border ${border}`}>
+          {/* Grid Container (Ref attached here for screenshot) */}
+          <div 
+            ref={plateRef}
+            className={`print-container min-w-fit mx-auto ${bgSurface} p-4 md:p-8 rounded-xl shadow-sm border ${border}`}
+          >
             
             {/* Grid Header (Column Numbers) */}
             <div 

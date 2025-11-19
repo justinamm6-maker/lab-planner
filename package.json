@@ -9,8 +9,10 @@
     "lint": "eslint .",
     "preview": "vite preview"
   },
-  "dependencies": {
+"dependencies": {
     "lucide-react": "^0.554.0",
+    "html2canvas": "^1.4.1",
+    "xlsx": "^0.18.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
